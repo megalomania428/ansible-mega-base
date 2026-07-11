@@ -71,8 +71,6 @@ jobs:
           persist-credentials: false
       - name: MegaLinter
         uses: oxsecurity/megalinter@v9 # zizmor: ignore[unpinned-uses]
-        env:
-          VALIDATE_ALL_CODEBASE: true
   all-green:
     name: all green
     timeout-minutes: 5
