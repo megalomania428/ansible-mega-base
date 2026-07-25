@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: mega_base
+  namespace: raven428
+  author: Dmitry Sukhodoyev
+  description: base configuration role
+  license: AGPLv3
+  min_ansible_version: "2.13"
+  galaxy_tags:
+    - base
+    - systemd
+dependencies: []
