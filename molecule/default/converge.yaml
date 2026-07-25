@@ -1,0 +1,4 @@
+---
+- name: Perform actions from inventory variables
+  hosts: all
+  tasks:

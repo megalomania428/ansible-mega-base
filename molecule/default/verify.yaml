@@ -1,0 +1,5 @@
+---
+- name: Verify downloaded files
+  hosts: all
+  gather_facts: false
+  tasks:
