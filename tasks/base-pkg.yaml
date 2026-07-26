@@ -1,0 +1,148 @@
+---
+# https://github.com/ansible/ansible/issues/48352 workaround
+- name: allow release info change
+  lineinfile:
+    path: /etc/apt/apt.conf.d/99-release-info-change
+    state: present
+    create: yes
+    mode: "0644"
+    line: Acquire::AllowReleaseInfoChange "true";
+  check_mode: false
+  when: ansible_pkg_mgr == 'apt'
+  tags: [setup, setup-pkg]
+
+- name: Configure /etc/preferences.d/no-postfix
+  copy:
+    dest: /etc/apt/preferences.d/no-postfix
+    content: |
+      Package: postfix
+      Pin: release *
+      Pin-Priority: -1
+    mode: "0640"
+    owner: root
+  tags: [setup, setup-pkg]
+
+# force update for apt keys to avoid `apt update` failures during --check
+- name: update check for apt keys
+  apt_key:
+    id: "{{ k.id | default(omit) }}"
+    url: "{{ k.url | default(omit) }}"
+    file: "{{ k.file | default(omit) }}"
+    data: "{{ k.data | default(omit) }}"
+    state: "{{ k.state | default(omit) }}"
+    keyring: "{{ k.keyring | default(omit) }}"
+    keyserver: "{{ k.keyserver | default(omit) }}"
+    validate_certs: "{{ k.validate_certs | default(omit) }}"
+  loop: >-
+    {{
+      infra_base_apt_keys_default |
+      union(
+        infra_main_suffixes |
+        union_by_suffixes(
+          prefix = 'infra_base_apt_keys',
+          hostvars = hostvars[inventory_hostname],
+        )
+      )
+    }}
+  loop_control:
+    loop_var: k
+  check_mode: no
+  when: ansible_pkg_mgr == 'apt'
+  register: _install_apt_keys
+  until: _install_apt_keys is success
+  retries: 5
+  delay: 2
+  tags: [setup, setup-pkg]
+
+- name: configure additional APT repos
+  apt_repository:
+    codename: "{{ r.codename | default(omit) }}"
+    filename: "{{ r.filename | default(omit) }}"
+    install_python_apt: "{{ r.install_python_apt | default(omit) }}"
+    mode: "{{ r.mode | default(omit) }}"
+    repo: "{{ r.repo | default(omit) }}"
+    state: "{{ r.state | default(omit) }}"
+    update_cache: "{{ r.update_cache | default(omit) }}"
+    update_cache_retries: "{{ r.update_cache_retries | default(omit) }}"
+    update_cache_retry_max_delay: "{{ r.update_cache_retry_max_delay | default(omit) }}"
+    validate_certs: "{{ r.validate_certs | default(omit) }}"
+  loop: >-
+    {{
+      infra_base_apt_repos_default |
+      union(
+        infra_main_suffixes |
+        union_by_suffixes(
+          prefix = 'infra_base_apt_repos',
+          hostvars = hostvars[inventory_hostname],
+        )
+      )
+    }}
+  loop_control:
+    loop_var: r
+  when: ansible_pkg_mgr == 'apt'
+  tags: [setup, setup-pkg]
+
+- name: install useful packages
+  apt:
+    update_cache: yes
+    name: >
+      {{
+        infra_base_default_packages |
+        union(
+          infra_main_suffixes |
+          union_by_suffixes(
+            prefix = 'infra_base_packages',
+            hostvars = hostvars[inventory_hostname],
+          )
+        )
+      }}
+  when: ansible_pkg_mgr == 'apt'
+  timeout: 777
+  register: _install_useful
+  until: _install_useful is success
+  retries: 5
+  delay: 2
+  tags: [setup, setup-pkg]
+
+- name: remove forbidden packages
+  apt:
+    name: >
+      {{
+        infra_base_default_deny_packages |
+        union(
+          infra_main_suffixes |
+          union_by_suffixes(
+            prefix = 'infra_base_deny_packages',
+            hostvars = hostvars[inventory_hostname],
+          )
+        )
+      }}
+    purge: yes
+    state: absent
+    autoremove: yes
+  when: ansible_pkg_mgr == 'apt'
+  timeout: 222
+  register: _remove_forbidden
+  until: _remove_forbidden is success
+  retries: 5
+  delay: 2
+  tags: [setup, setup-pkg]
+
+- name: ensure no unowned or ungrouped files or directories exist
+  file:
+    path: "{{ i }}"
+    state: absent
+  loop_control:
+    loop_var: i
+  loop:
+    - /run/named
+    - /var/cache/bind
+
+- name: ensure openssh-server to latest for hardening
+  package:
+    name: "openssh-server"
+    state: latest
+  notify: restart sshd
+  when:
+    - ssh_server_hardening | bool
+  tags: [skip_ansible_lint]

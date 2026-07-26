@@ -1,0 +1,84 @@
+---
+- name: check profile directory
+  become: false
+  stat:
+    path: "{{ role_path }}/files/base/home/{{ u.name }}"
+  register: "profile_dir"
+  delegate_to: "127.0.0.1"
+  tags: [setup, etc, base-users]
+
+- name: create group
+  group:
+    name: "{{ u.name }}"
+    gid: "{{ u.gid | default(omit) }}"
+  tags: [setup, etc, base-users]
+
+- name: create user
+  user:
+    name: "{{ u.name }}"
+    group: "{{ u.name }}"
+    uid: "{{ u.uid | default(omit) }}"
+    groups: "{{ u.groups | default(omit) }}"
+    create_home: >
+      {{
+        profile_dir.stat.exists |
+        ternary('no','yes')
+      }}
+    shell: "{{ u.shell | default('/bin/bash') }}"
+  tags: [setup, etc, base-users]
+
+- name: create home directory
+  file:
+    path: "/home/{{ u.name }}"
+    owner: "{{ u.uid | default(u.name) }}"
+    group: "{{ u.gid | default(u.name) }}"
+    state: directory
+    mode: "0700"
+  tags: [setup, etc, base-users]
+
+- name: upload profile
+  synchronize:
+    src: "base/home/{{ u.name }}/."
+    dest: "/home/{{ u.name }}/."
+    recursive: yes
+    rsync_opts:
+      - "--update"
+      - "--omit-dir-times"
+      - >-
+        --rsh={{
+          lookup('env', 'RSYNC_RSH') |
+          default(
+            '/usr/bin/env ssh -o HostKeyAlgorithms=ssh-ed25519 -o
+            PreferredAuthentications=publickey -o StrictHostKeyChecking=yes',
+            True
+          )
+        }}
+      - "--chmod=u=rwX,g=,o="
+      - "--chown={{ u.uid | default(u.login) }}:{{ u.gid | default(u.login) }}"
+  when: profile_dir.stat.exists
+  tags: [setup, etc, base-users]
+
+- name: maintain public keys
+  authorized_key:
+    user: "{{ u.name }}"
+    key: |
+      {%-
+        for key in (
+          u.pub |
+          default([])
+        )
+      %}
+        {{ key }}
+      {%
+        endfor
+      -%}
+    state: present
+    exclusive: true
+  when: u.pub | default([]) | length > 0
+  tags: [setup, etc, base-users]
+
+- name: Ensure arpwatch user's shell is /usr/sbin/nologin
+  user:
+    name: arpwatch
+    shell: /usr/sbin/nologin
+  tags: [setup, etc, base-users]
