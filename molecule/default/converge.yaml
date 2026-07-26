@@ -2,3 +2,99 @@
 - name: Perform actions from inventory variables
   hosts: all
   tasks:
+    # case 1: called from the same role, existing os_family/os_dist files
+    # RedHat family + version 8.99 hits defaults/os_family/redhat-8.yaml while
+    # the os_dist and version-level files are absent, so only the existing
+    # family-level file is loaded and the rest are skipped with a warning
+    - name: "same role: set facts for an existing RedHat 8 target"
+      ansible.builtin.set_fact:
+        ansible_os_family: RedHat
+        ansible_distribution: NoSuchDist
+        ansible_distribution_major_version: "8"
+        ansible_distribution_version: "8.99"
+
+    - name: "same role: load vars for an existing RedHat 8 target"
+      ansible.builtin.import_role:
+        name: ansible-mega-base
+        tasks_from: base-vars.yaml
+
+    - name: "same role: assert os_family redhat-8 variables are loaded"
+      ansible.builtin.assert:
+        that:
+          - "infra_sshd_variable_name is defined"
+          - "infra_sshd_variable_name == 'CRYPTO_POLICY'"
+          - "infra_sshd_variable_file == '/etc/sysconfig/sshd'"
+        fail_msg: "expected redhat-8 os_family defaults to be loaded"
+        success_msg: "redhat-8 os_family defaults loaded from the role itself"
+
+    # case 2: called from the same role, no matching files at all
+    # a fully unknown OS must not fail, every include is skipped with a warning
+    - name: "same role: set facts for a non-existing OS target"
+      ansible.builtin.set_fact:
+        ansible_os_family: NoSuchFamily
+        ansible_distribution: NoSuchDist
+        ansible_distribution_major_version: "99"
+        ansible_distribution_version: "99.99"
+
+    - name: "same role: load vars for a non-existing OS target"
+      ansible.builtin.import_role:
+        name: ansible-mega-base
+        tasks_from: base-vars.yaml
+
+    - name: "same role: assert nothing was loaded for the unknown OS"
+      ansible.builtin.assert:
+        that:
+          - "nosuchfamily_marker is not defined"
+        fail_msg: "unknown OS must not load any variables"
+        success_msg: "unknown OS skipped every include without failing"
+
+    # case 3: called from another role, existing fixture files
+    # the mega_caller fixture role ships its own defaults/os_family and
+    # defaults/os_dist, so ansible_parent_role_paths must point the loader
+    # at the caller role and read every level from there
+    - name: "other role: set facts for an existing fixture target"
+      ansible.builtin.set_fact:
+        ansible_os_family: Fixture
+        ansible_distribution: FixtureDist
+        ansible_distribution_major_version: "9"
+        ansible_distribution_version: "9.4"
+
+    - name: "other role: load vars through the mega_caller fixture role"
+      ansible.builtin.import_role:
+        name: mega_caller
+
+    - name: "other role: assert every level was loaded from the caller role"
+      ansible.builtin.assert:
+        that:
+          - "mega_caller_os_family is defined and mega_caller_os_family == 'loaded'"
+          - "mega_caller_os_dist is defined and mega_caller_os_dist == 'loaded'"
+          - "mega_caller_os_family_major is defined"
+          - "mega_caller_os_family_major == 'loaded'"
+          - "mega_caller_os_dist_major is defined"
+          - "mega_caller_os_dist_major == 'loaded'"
+          - "mega_caller_os_family_version is defined"
+          - "mega_caller_os_family_version == 'loaded'"
+          - "mega_caller_os_dist_version is defined"
+          - "mega_caller_os_dist_version == 'loaded'"
+        fail_msg: "expected all fixture defaults to be loaded from the caller role"
+        success_msg: "all fixture defaults loaded from the caller role"
+
+    # case 4: called from another role, no matching fixture files
+    # an unknown OS routed through the caller role must also skip silently
+    - name: "other role: set facts for a non-existing OS target"
+      ansible.builtin.set_fact:
+        ansible_os_family: NoSuchFamily
+        ansible_distribution: NoSuchDist
+        ansible_distribution_major_version: "99"
+        ansible_distribution_version: "99.99"
+
+    - name: "other role: load vars for a non-existing OS through the caller role"
+      ansible.builtin.import_role:
+        name: mega_caller
+
+    - name: "other role: assert nothing was loaded for the unknown OS"
+      ansible.builtin.assert:
+        that:
+          - "mega_caller_nosuch_marker is not defined"
+        fail_msg: "unknown OS through the caller role must not load any variables"
+        success_msg: "unknown OS through the caller role skipped without failing"
