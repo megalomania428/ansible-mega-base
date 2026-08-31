@@ -1,0 +1,6 @@
+---
+- name: load ansible-mega-base variables depend OS
+  ansible.builtin.import_role:
+    name: ansible-mega-base
+    tasks_from: base-vars.yaml
+  tags: [mega_caller-vars-loader]

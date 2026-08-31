@@ -1,0 +1,992 @@
+---
+- name: ensure locale en_US.UTF-8 exists
+  locale_gen:
+    name: en_US.UTF-8
+    state: present
+  tags: [setup, etc, etc-locale]
+
+- name: maintain root public keys
+  authorized_key:
+    user: root
+    key: |
+      {%-
+        for key in (
+          infra_base_default_root_keys |
+          union(
+            infra_main_suffixes |
+            union_by_suffixes(
+              prefix = 'infra_base_root_keys',
+              hostvars = hostvars[inventory_hostname],
+            )
+          )
+        )
+      %}
+        {{ key }}
+      {%
+        endfor
+      -%}
+    state: present
+    exclusive: true
+  tags: [setup, etc, etc-access]
+
+- name: maintain users
+  include_tasks: base-users.yaml
+  loop: >-
+    {{
+      infra_base_default_users |
+      union(
+        infra_main_suffixes |
+        union_by_suffixes(
+          prefix = 'infra_base_users',
+          hostvars = hostvars[inventory_hostname],
+        )
+      )
+    }}
+  loop_control:
+    loop_var: u
+  tags: [setup, etc, base-users]
+
+- name: ensure sysstat is enabled
+  copy:
+    content: 'ENABLED="true"'
+    dest: /etc/default/sysstat
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart sysstat
+  tags: [setup, etc, base-systat]
+
+- name: sysstat log permissions
+  lineinfile:
+    path: "/usr/lib/sysstat/{{ lib }}"
+    regexp: "^UMASK="
+    line: "UMASK=0077"
+  loop_control:
+    loop_var: lib
+  with_items:
+    - sa1
+    - sa2
+  tags: [setup, etc, base-systat]
+
+- name: ensure acct, systat are started
+  service:
+    name: "{{ acc_systemd_unit }}"
+    state: started
+    enabled: true
+  loop_control:
+    loop_var: acc_systemd_unit
+  with_items:
+    - acct
+    - sysstat
+  tags: [setup, etc, base-systat]
+
+- name: create directories, aide
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0600"
+  with_items:
+    - /var/log/aide
+    - /var/lib/aide
+    - /etc/aide
+  tags: [setup, etc, base-aide]
+
+- name: set variables for aide
+  set_fact:
+    aide_log_level: "log_level=error"
+  when: >
+    ansible_facts['distribution'] == 'Ubuntu'
+    and ansible_facts['distribution_major_version'] == '22'
+  tags: [setup, etc, base-aide]
+
+- name: set variables for aide
+  set_fact:
+    aide_log_level: "verbose=5"
+  when: >
+    ansible_facts['distribution'] == 'Ubuntu'
+    and ansible_facts['distribution_major_version'] == '20'
+  tags: [setup, etc, base-aide]
+
+- name: configure rules
+  template:
+    src: etc/aide/aide.conf.j2
+    dest: /etc/aide/aide.conf
+    owner: root
+    group: root
+    mode: "0600"
+  tags: [setup, etc, base-aide]
+
+- name: initialize database
+  command: aide -c /etc/aide/aide.conf --init
+  args:
+    creates: /var/lib/aide/aide.db.new.gz
+  poll: 0
+  register: aide_init_result
+  tags: [setup, etc, base-aide]
+
+- name: copy database to destination
+  command: cp -a /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+  poll: 0
+  args:
+    creates: /var/lib/aide/aide.db.gz
+  tags: [setup, etc, base-aide]
+
+- name: absent default crontab entry
+  file:
+    path: /etc/cron.daily/aide
+    state: absent
+  tags: [setup, etc, base-aide]
+
+- name: create crontab entry for checks
+  cron:
+    name: AIDE check
+    state: present
+    minute: "0"
+    hour: "3"
+    job: /usr/bin/aide.wrapper --check --config /etc/aide/aide.conf
+    cron_file: /etc/cron.d/aide
+    user: root
+  tags: [setup, etc, base-aide]
+
+# ssh -Q help
+# https://pypi.org/project/ssh-audit/
+# https://www.ssh-audit.com/hardening_guides.html
+- name: hardening ssh server protocols
+  when:
+    - ssh_server_hardening | bool
+  copy:
+    dest: "{{ infra_sshd_variable_file }}"
+    content: |
+      #
+      # managed by Ansible
+      #
+      SSH_USE_STRONG_RNG=0
+      {{ infra_sshd_variable_name }}='
+      {% if infra_sshd_ciphers | default([]) | length > 0 %}
+        -oCiphers={{ infra_sshd_ciphers | join(',') }}
+      {% endif %}{% if infra_sshd_MACs | default([]) | length > 0 %}
+        -oMACs={{ infra_sshd_MACs | join(',') }}
+      {% endif %}{% if infra_sshd_kex_gss | default([]) | length > 0 %}
+        -oGSSAPIKexAlgorithms={{ infra_sshd_kex_gss | join(',') }}
+      {% endif %}{% if infra_sshd_kex | default([]) | length > 0 %}
+        -oKexAlgorithms={{ infra_sshd_kex | join(',') }}
+      {% endif %}{% if infra_sshd_host_key | default([]) | length > 0 %}
+        -oHostKeyAlgorithms={{ infra_sshd_host_key | join(',') }}
+      {% endif %}{% if infra_sshd_pubkey_type | default([]) | length > 0 %}
+        -oPubkeyAcceptedKeyTypes={{ infra_sshd_pubkey_type | join(',') }}
+      {% endif %}{% if infra_sshd_CA_sig | default([]) | length > 0 %}
+        -oCASignatureAlgorithms={{ infra_sshd_CA_sig | join(',') }}
+      {% endif %}
+      '
+    mode: 0640
+    owner: root
+    group: root
+  notify: restart sshd
+  tags: [setup, etc, etc-sshd]
+
+- name: check if {{ sshd_moduli_file }} contains weak DH parameters
+  shell: awk '$5 < {{ sshd_moduli_minimum }}' {{ sshd_moduli_file }}
+  register: sshd_register_moduli
+  changed_when: false
+  check_mode: false
+  when: ssh_server_hardening | bool
+  tags: [setup, etc, etc-sshd]
+
+- name: remove all small primes
+  shell: >
+    awk '$5 >= {{ sshd_moduli_minimum }}'
+    {{ sshd_moduli_file }} > {{ sshd_moduli_file }}.new ;
+    [ -r {{ sshd_moduli_file }}.new -a -s {{ sshd_moduli_file }}.new ] &&
+    mv {{ sshd_moduli_file }}.new {{ sshd_moduli_file }} || true
+  notify: restart sshd
+  when:
+    - ssh_server_hardening | bool
+    - sshd_register_moduli.stdout
+  tags: [setup, etc, etc-sshd]
+
+- name: set timezone
+  timezone:
+    name: Etc/UTC
+  tags: [setup, etc, etc-system]
+
+- name: upload sysctl settings
+  notify: apply sysctl
+  copy:
+    src: base/etc/sysctl.d/99-tuning.conf
+    dest: /etc/sysctl.d/99-tuning.conf
+    mode: "0644"
+  tags: [setup, etc, etc-system]
+
+- name: enable and start rsyslogd
+  systemd:
+    name: rsyslog
+    masked: no
+    enabled: yes
+    state: started
+  tags: [setup, etc, etc-log]
+
+- name: disable rsyslog *.emerg to all users
+  notify: restart rsyslog
+  lineinfile:
+    path: /etc/rsyslog.d/50-default.conf
+    regexp: '^(\*\.emerg\s+.+\*)$'
+    line: '#\1'
+    backrefs: yes
+  tags: [setup, etc, etc-log]
+
+- name: disable tendermint rsyslog
+  notify: restart rsyslog
+  when: >
+    blch_tendermint_kind is defined and
+    infra_disable_tendermint_syslog is true
+  template:
+    src: etc/rsyslog.d/30-tendermint.conf.j2
+    dest: /etc/rsyslog.d/30-tendermint.conf
+    mode: "0644"
+  tags: [setup, etc, etc-log]
+
+- name: clean up tencent pre-install templates
+  block:
+    - name: update source.list
+      template:
+        src: etc/apt/sources.list.j2
+        dest: /etc/apt/sources.list
+        mode: "0644"
+    - name: remove excess from tencent image
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - /etc/uuid
+        - /usr/local/qcloud
+        - /etc/cron.d/sgagenttask
+        - /etc/cron.d/yunjing
+      ignore_errors: true
+    - name: Disable tat_agent
+      systemd:
+        daemon_reload: yes
+        enabled: no
+        state: stopped
+        name: tat_agent
+      ignore_errors: true
+  when: >
+    infra_source_list is defined and
+    cloud_vendor is defined and
+    cloud_vendor == "tencent"
+  check_mode: false
+  tags: [setup, etc, etc-log]
+
+- name: add BSD-style all.log to rsyslogd
+  notify: restart rsyslog
+  copy:
+    src: base/etc/rsyslog.d/all-log.conf
+    dest: /etc/rsyslog.d/all-log.conf
+    mode: "0644"
+  tags: [setup, etc, etc-log]
+
+- name: add all.log to logrotate
+  copy:
+    src: base/etc/logrotate.d/all-log.conf
+    dest: /etc/logrotate.d/all-log.conf
+    mode: "0644"
+  tags: [setup, etc, etc-logrotate]
+
+- name: get list of logrotate rules
+  find:
+    path: /etc/logrotate.d
+    file_type: file
+  register: logrotate_rules
+  tags: [setup, etc, etc-logrotate]
+
+- name: fixup logrotate issues with wrong next task
+  replace:
+    path: "{{ item.path }}"
+    regexp: "create \\140"
+    replace: "create 0640"
+  with_items: "{{ logrotate_rules.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: [setup, etc, etc-logrotate]
+
+- name: fix file permissions in logrotate
+  replace:
+    path: "{{ item.path }}"
+    regexp: "create ([0-2]*[1-7])[0-7][0-7]"
+    replace: 'create \g<1>40'
+  with_items: "{{ logrotate_rules.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  tags: [setup, etc, etc-logrotate]
+
+- name: configure journald
+  ini_file:
+    dest: /etc/systemd/journald.conf
+    section: Journal
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    mode: "0644"
+  loop:
+    - { option: "Storage", value: "persistent" }
+    - { option: "Compress", value: "yes" }
+    - { option: "ForwardToSyslog", value: "yes" }
+  notify: restart journald
+  tags: [setup, etc, etc-log]
+
+- name: configure journald
+  ini_file:
+    dest: /etc/systemd/journald.conf
+    section: Journal
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    mode: "0644"
+  loop:
+    - { option: "Storage", value: "persistent" }
+    - { option: "Compress", value: "yes" }
+  notify: restart journald
+  tags: [setup, etc, etc-log]
+
+- name: improve ssh server security
+  action: |
+    augeas commands='
+    {%-
+      for key, value in (
+        infra_base_default_ssh_config |
+        combine(
+          infra_main_suffixes |
+          combine_by_suffixes(
+            prefix = 'infra_base_ssh_config',
+            hostvars = hostvars[inventory_hostname],
+            combine_options = {
+              'recursive': True,
+              'list_merge': 'append',
+            },
+          ),
+        )
+      ).items()
+    %}
+      set /files/etc/ssh/sshd_config/{{ key }} "{{ value }}"
+    {%
+      endfor
+    -%}
+    '
+  tags: [setup, etc, etc-access]
+  notify: restart sshd
+
+- name: restrict access to /etc/sudoers.d
+  file:
+    path: /etc/sudoers.d
+    state: directory
+    mode: "0700"
+  tags: [setup, etc, etc-access]
+
+- name: replace sudoers
+  copy:
+    src: base/etc/sudoers
+    dest: /etc/sudoers
+    mode: 0440
+    owner: root
+    group: root
+  tags: [setup, etc, etc-access]
+
+- name: create group for su
+  group:
+    name: sugroup
+    state: present
+    system: true
+  tags: [setup, etc, etc-access]
+
+- name: ensure su command is restricted with pam_wheel.so
+  vars:
+    pam_wheel_required: "auth required pam_wheel.so"
+  replace:
+    path: /etc/pam.d/su
+    regexp: '^auth\s+required\s+pam_wheel\.so'
+    replace: "auth sufficient pam_rootok.so"
+  when: >
+    pam_wheel_required in lookup('file', '/etc/pam.d/su')
+  tags: [setup, etc, etc-pam]
+
+- name: add required line to su command
+  vars:
+    pam_wheel_use_uid: "auth       required     pam_wheel.so use_uid group=sugroup"
+  lineinfile:
+    path: /etc/pam.d/su
+    line: "{{ pam_wheel_use_uid }}"
+  tags: [setup, etc, etc-pam]
+
+- name: configure pwquality pam module
+  copy:
+    dest: /etc/security/pwquality.conf
+    content: |
+      #
+      # managed by Ansible
+      #
+      minlen = 14
+      minclass = 4
+      retry = 3
+    mode: 0640
+    owner: root
+    group: root
+  tags: [setup, etc, etc-pam]
+
+- name: stop and disable chronyd
+  systemd:
+    name: chronyd
+    enabled: no
+    state: stopped
+  ignore_errors: true
+  tags: [setup, etc, etc-system]
+
+- name: configure timesyncd
+  ini_file:
+    dest: /etc/systemd/timesyncd.conf
+    section: Time
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    mode: "0644"
+  loop:
+    - { option: "NTP", value: "{{ infra_base_ntp|join(' ') }}" }
+    - { option: "PollIntervalMinSec", value: "16" }
+    - { option: "PollIntervalMaxSec", value: "256" }
+    - option: "FallbackNTP"
+      value: "{{ infra_base_ntp_fallback|join(' ') }}"
+  notify: restart timesyncd
+  tags: [setup, etc, etc-system]
+
+- name: enable and start timesyncd
+  systemd:
+    name: systemd-timesyncd
+    masked: no
+    enabled: yes
+    state: started
+  tags: [setup, etc, etc-system]
+
+- name: configure startup fsck
+  copy:
+    src: base/etc/e2fsck.conf
+    dest: /etc/e2fsck.conf
+    mode: 0644
+    owner: root
+    group: root
+  tags: [setup, etc, etc-system]
+
+- name: increase limits
+  copy:
+    src: base/etc/security/limits.conf
+    dest: /etc/security/limits.conf
+    mode: 0644
+    owner: root
+    group: root
+  tags: [setup, etc, etc-system]
+
+- name: freaky
+  copy:
+    dest: /etc/update-motd.d/00-header
+    mode: 0755
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      /usr/bin/env printf \
+        "FreeBSD 10.1-RELEASE #0: Mon Nov 13 09:32:37 UTC 2014\n\n"
+      /usr/bin/env printf "Welcome to FreeBSD!\n"
+  tags: [setup, etc, etc-system]
+
+- name: remove unwanted motd
+  file:
+    path: "/etc/update-motd.d/{{ f }}"
+    state: absent
+  loop:
+    - 10-help-text
+    - 50-motd-news
+    - 60-unminimize
+  loop_control:
+    loop_var: f
+  tags: [setup, etc, etc-system]
+
+- name: configure atop
+  copy:
+    dest: /etc/default/atop
+    mode: 0644
+    owner: root
+    group: root
+    content: |
+      #
+      # atop config
+      #
+      # NB managed by Ansible
+      #
+      # interval in seconds
+      LOGINTERVAL=60
+      # number of days
+      LOGGENERATIONS=11
+  tags: [setup, etc, etc-mon]
+
+- name: enable and start atop
+  systemd:
+    name: atop
+    masked: no
+    enabled: yes
+    state: started
+  tags: [setup, etc, etc-mon]
+
+- name: configure kernel parameters
+  notify: update grub config
+  copy:
+    dest: /etc/default/grub.d/{{ item.filename }}.cfg
+    content: |
+      GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} {{ item.option }}"
+    mode: 0644
+    owner: root
+    group: root
+  loop: >
+    {{
+      infra_default_grub_options |
+      union(
+        infra_main_suffixes |
+        union_by_suffixes(
+          prefix = 'infra_grub_options',
+          hostvars = hostvars[inventory_hostname],
+        )
+      )
+    }}
+  tags: [setup, etc, etc-boot]
+
+- name: force to build grub config
+  meta: flush_handlers
+
+- name: configure systemd-resolved
+  ini_file:
+    dest: /etc/systemd/resolved.conf
+    section: Resolve
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    mode: "0644"
+  loop:
+    - { option: "Cache", value: "yes" }
+    # #!fixme: should be enabled only with DNSOverTLS
+    # looks like some hosting operators intercept the DNS queries
+    - option: "DNSSEC"
+      value: "{{ infra_base_dns_dnssec | string | lower }}"
+    # #!fixme: sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys \
+    # 32A37959C2FA5C3C99EFBC32A79206696452D198 won't work with DNSOverTLS=yes :-(
+    - { option: "DNSOverTLS", value: "opportunistic" }
+    - { option: "DNSStubListener", value: "yes" }
+    - { option: "DNS", value: "{{ infra_base_dns|join(' ') }}" }
+    - { option: "Domains", value: "{{ infra_base_dns_domains|join(' ') }}" }
+    - option: "FallbackDNS"
+      value: "{{ infra_base_dns_fallback|join(' ') }}"
+  notify: restart resolved
+  tags: [setup, etc, etc-system, etc-resolved]
+
+- name: enable and start systemd-resolved
+  systemd:
+    name: systemd-resolved
+    masked: no
+    enabled: yes
+    state: started
+  tags: [setup, etc, etc-system, etc-resolved]
+
+- name: configure resolv.conf
+  file:
+    dest: /etc/resolv.conf
+    src: /run/systemd/resolve/stub-resolv.conf
+    force: yes
+    follow: no
+    state: link
+  tags: [setup, etc, etc-system, etc-resolved]
+
+- name: enable systemd-resolved in nsswitch.conf
+  lineinfile:
+    path: /etc/nsswitch.conf
+    regexp: '^(hosts:\s+files)(\s+dns?.*)?$'
+    line: '\1 resolve\2'
+    backrefs: yes
+  tags: [setup, etc, etc-system, etc-nsswitch, etc-resolved]
+
+- name: create directory for some systemd braces
+  file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  loop: "{{ infra_systemd_units_braces }}"
+  tags: [setup, etc, etc-system, etc-systemd-braces]
+
+- name: ensure some services always restartable
+  notify: systemd daemon-reload
+  copy:
+    dest: "/etc/systemd/system/{{ item }}.service.d/brace.conf"
+    mode: "0644"
+    owner: root
+    group: root
+    content: |
+      [Service]
+      RestartSec=1
+      Restart=always
+      StartLimitInterval=0
+  loop: "{{ infra_systemd_units_braces }}"
+  tags: [setup, etc, etc-system, etc-systemd-braces]
+
+- name: set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  tags: [setup, etc, etc-system]
+
+- name: ensure unattended-upgrades enabled and started
+  copy:
+    src: base/etc/apt/apt.conf.d/50unattended-upgrades
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    mode: "0644"
+  notify: restart unattended-upgrades
+  tags: [setup, etc, etc-system]
+
+- name: enable and start unattended-upgrades
+  systemd:
+    name: unattended-upgrades
+    masked: no
+    enabled: yes
+    state: started
+  tags: [setup, etc, etc-system]
+
+- name: fill DH param file
+  copy:
+    src: base/etc/dhparam.pem
+    dest: /etc/dhparam.pem
+    mode: "0600"
+  tags: [setup, etc, etc-cry]
+
+- name: generate DH param file
+  openssl_dhparam:
+    path: /etc/dhparam.pem
+    size: 4096
+    mode: 0600
+    owner: root
+    group: root
+  tags: [setup, etc, etc-cry]
+
+# lynis hardening
+- name: enable and start services
+  systemd:
+    name: "{{ s }}"
+    masked: no
+    enabled: yes
+    state: started
+  loop:
+    - haveged
+    - sysstat
+    - acct
+  loop_control:
+    loop_var: s
+  tags: [setup, etc, etc-lynis]
+
+- name: ensure rsync service is masked
+  systemd:
+    name: rsync
+    masked: yes
+    enabled: no
+    state: stopped
+  tags: [setup, etc, etc-lynis]
+
+- name: configure inactive lockout
+  lineinfile:
+    path: /etc/default/useradd
+    regexp: '^[#\s]*INACTIVE='
+    line: "INACTIVE=30"
+
+- name: improve login.defs security
+  action: |
+    augeas commands='
+    {%-
+      for key, value in (
+        infra_base_default_login_defs |
+        combine(
+          infra_main_suffixes |
+          combine_by_suffixes(
+            prefix = 'infra_base_login_defs',
+            hostvars = hostvars[inventory_hostname],
+            combine_options = {
+              'recursive': True,
+              'list_merge': 'append',
+            },
+          ),
+        )
+      ).items()
+    %}
+      set /files/etc/login.defs/{{ key }} "{{ value }}"
+    {%
+      endfor
+    -%}
+    '
+  tags: [setup, etc, etc-lynis]
+
+- name: get home directories
+  find:
+    paths: "/home"
+    file_type: "directory"
+  register: home_dirs
+  tags: [setup, etc, etc-lynis]
+
+- name: chmod and own home directories if any
+  file:
+    mode: "u=rwX,g=,o="
+    owner: "{{ f.uid }}"
+    group: "{{ f.gid }}"
+    dest: "{{ f.path }}"
+    follow: no
+    recurse: yes
+  # ignore_errors: yes
+  # changed_when: no
+  loop: >
+    {{
+      home_dirs.files |
+      rejectattr('path', 'eq', '/home/buildkite-agent') |
+      list
+    }}
+  loop_control:
+    loop_var: f
+  tags: [setup, etc, etc-lynis]
+
+- name: filling up /etc/issue
+  copy:
+    dest: "{{ f }}"
+    mode: "0644"
+    content: >
+      Unauthorized access to this system is forbidden and will be prosecuted by law.
+      By accessing this system, you agree that your actions may be monitored if
+      unauthorized usage is suspected.
+  loop:
+    - /etc/issue
+    - /etc/issue.net
+  loop_control:
+    loop_var: f
+  tags: [setup, etc, etc-lynis]
+
+- name: mount options for /dev"
+  mount:
+    path: "/dev"
+    src: "devtmpfs"
+    fstype: "devtmpfs"
+    opts: "defaults,noexec,nosuid"
+    state: "present"
+  tags: [setup, etc, etc-lynis]
+
+- name: mount options for /dev/shm"
+  mount:
+    path: "/dev/shm"
+    src: "tmpfs"
+    fstype: "tmpfs"
+    opts: "defaults,noexec,nosuid,nodev"
+    state: "present"
+  tags: [setup, etc, etc-lynis]
+
+- name: chmod important files
+  file:
+    path: "{{ item }}"
+    mode: "0600"
+  loop:
+    - /etc/crontab
+    - /boot/grub/grub.cfg
+  tags: [setup, etc, etc-lynis]
+
+- name: chmod important directories
+  file:
+    path: "{{ item }}"
+    mode: "0700"
+  loop:
+    - /etc/cron.d
+    - /etc/cron.daily
+    - /etc/cron.hourly
+    - /etc/cron.weekly
+    - /etc/cron.monthly
+  tags: [setup, etc, etc-lynis]
+
+- name: disable at and cron for nonuser
+  copy:
+    content: "root"
+    dest: "/etc/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - at.allow
+    - cron.allow
+  tags: [setup, etc, etc-lynis]
+
+- name: absent at.deny, cron.deny, audit
+  file:
+    path: "/etc/{{ item }}"
+    state: absent
+  loop:
+    - at.deny
+    - cron.deny
+    - audit
+
+- name: blacklist forbidden modules
+  copy:
+    dest: /etc/modprobe.d/disable-removable-storage.conf
+    mode: 0644
+    owner: root
+    group: root
+    content: |
+      {% for module in forbidden_modules %}
+      blacklist {{ module }}
+      install {{ module }} /bin/true
+      {% endfor %}
+  vars:
+    forbidden_modules:
+      - usb_storage
+      - ohci1394
+      - firewire_ohci
+      - firewire-core
+      - dccp
+      - sctp
+      - rds
+      - tipc
+      - cramfs
+      - squashfs
+      - udf
+      - freevxfs
+      - hfs
+      - hfsplus
+      - jffs2
+  tags: [setup, etc, etc-lynis]
+
+- name: check that the snapd exists
+  stat:
+    path: /snap/bin
+  register: snapd_exists
+  tags: [setup, etc, etc-lynis]
+
+- name: remove snap path from environment
+  lineinfile:
+    path: /etc/environment
+    backrefs: yes
+    regexp: '^(\s*PATH\s*=\s*"?.*?):?\/snap\/bin(.*"?\s*)$'
+    line: '\1\2'
+  when: not snapd_exists.stat.exists
+  tags: [setup, etc, etc-lynis]
+
+- name: add shell timeout
+  copy:
+    dest: /etc/profile.d/TMOUT.sh
+    mode: 0644
+    owner: root
+    group: root
+    content: |
+      ulimit -c 0
+      umask 0077
+      TMOUT={{ infra_base_shell_tmout }}
+  tags: [setup, etc, etc-lynis]
+
+- name: apply /etc/hosts to replace hostname with fqdn
+  copy:
+    dest: /etc/hosts
+    mode: 0644
+    owner: root
+    group: root
+    content: |
+      127.0.0.1 localhost
+      127.0.1.1 {{
+        ansible_hostname
+      }}.{{
+        infra_base_dns_suffix
+      }} {{ ansible_hostname }}
+      ::1 ip6-localhost ip6-loopback
+      fe00::0 ip6-localnet
+      ff00::0 ip6-mcastprefix
+      ff02::1 ip6-allnodes
+      ff02::2 ip6-allrouters
+      ff02::3 ip6-allhosts
+      {{ ansible_default_ipv4.address }} {{
+        ansible_hostname
+      }}.{{
+        infra_base_dns_suffix
+      }} {{ ansible_hostname }}
+
+- name: disable usb devices authorization
+  copy:
+    dest: /etc/udev/rules.d/disable-usb-devices.rules
+    content: >
+      ACTION=="add", SUBSYSTEMS=="usb", RUN+="/bin/sh -c 'for host in
+      $(find /sys/bus/usb/devices -name \"usb*\" -type l -print); do
+      echo 0 > $host/authorized_default; echo 0 > $host/authorized; done'"
+    mode: "0644"
+    force: "yes"
+    follow: "no"
+  tags: [setup, etc, etc-lynis]
+
+- name: check if apport is installed, coredump
+  stat:
+    path: /etc/default/apport
+  register: apport_config
+  tags: [setup, etc, etc-lynis]
+
+- name: disable apport, coredump
+  lineinfile:
+    path: /etc/default/apport
+    regexp: "^enabled="
+    line: "enabled=0"
+  when: apport_config.stat.exists
+  tags: [setup, etc, etc-lynis]
+
+- name: create directory for systemd-coredump config
+  file:
+    path: "/etc/systemd/coredump.conf.d"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [setup, etc, etc-lynis]
+
+- name: complete disable systemd-coredump
+  copy:
+    dest: /etc/systemd/coredump.conf.d/disable.conf
+    mode: 0644
+    owner: root
+    group: root
+    content: |
+      [Coredump]
+      ProcessSizeMax=0
+      Storage=none
+  tags: [setup, etc, etc-lynis]
+
+- name: modify default coredump.conf
+  lineinfile:
+    path: /etc/systemd/coredump.conf
+    regexp: "{{ i.regexp }}"
+    line: "{{ i.line }}"
+  loop_control:
+    loop_var: i
+  loop:
+    - { line: "Storage=none", regexp: "^(Storage=\\w*)" }
+    - { line: "ProcessSizeMax=0", regexp: "^(ProcessSizeMax=\\w*)" }
+  tags: [setup, etc, etc-lynis]
+
+- name: configure usbguard daemon
+  ini_file:
+    dest: /etc/usbguard/usbguard-daemon.conf
+    section: null
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+    mode: "0644"
+  loop:
+    - { option: "PresentControllerPolicy", value: "apply-policy" }
+  tags: [setup, etc, etc-lynis]
+
+- name: add load udf module
+  copy:
+    dest: /etc/modules-load.d/udf.conf
+    mode: 0644
+    owner: root
+    group: root
+    content: udf
+  tags: [setup, etc, etc-lynis]

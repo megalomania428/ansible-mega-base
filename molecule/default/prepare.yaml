@@ -1,0 +1,12 @@
+---
+- name: Prepare targets
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for container to be ready
+      ansible.builtin.raw: systemctl is-active basic.target
+      register: _wait_result
+      until: _wait_result.rc == 0
+      retries: 33
+      delay: 1
+      changed_when: false

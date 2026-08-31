@@ -1,0 +1,11 @@
+---
+- name: load role variables depend OS
+  import_tasks: base-vars.yaml
+  tags: [setup, vars]
+# - name: install base safe packages
+#   import_tasks: base-pkg.yaml
+#   tags: [setup, pkg]
+
+# - name: upload base safe configs
+#   import_tasks: base-etc.yaml
+#   tags: [setup, etc]

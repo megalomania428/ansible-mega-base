@@ -1,0 +1,147 @@
+---
+# usage from the same role (tasks/main.yaml):
+# - name: load role variables depend OS
+#   import_tasks: base-vars.yaml
+#   tags: [<role_name>-vars-loader]
+#
+# usage from another role:
+# - name: load ansible-mega-base variables depend OS
+#   import_role:
+#     name: ansible-mega-base
+#     tasks_from: base-vars.yaml
+#   tags: [<role_name>-vars-loader]
+#
+# from the same role "ansible_parent_role_paths" is empty, so the loader
+# falls back to "role_path" and reads defaults from ansible-mega-base itself;
+# from another role "ansible_parent_role_paths | first" is the caller role,
+# so the OS/dist defaults are read from that calling role instead
+
+# "defaults/os_family/redhat.yaml" for RHEL, Rocky
+# "defaults/os_family/debian.yaml" for Debian, Ubuntu
+# "defaults/os_family/astra linux.yaml" for Astra Linux (family is not Debian)
+# "defaults/os_family/redos.yaml" for RED OS (family is not RedHat, no vanilla
+# Ansible mapping exists for it, ansible_os_family falls back to "RedOS")
+- name: "include variables ansible_os_family"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - "{{ ansible_os_family | lower }}.yaml"
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_family"
+  loop_control:
+    label: "{{ item | basename }}"
+
+# "defaults/os_dist/redhat.yaml" for RHEL
+# "defaults/os_dist/rocky.yaml" for Rocky
+# "defaults/os_dist/redos.yaml" for RED OS (RHEL/CentOS-based, one word,
+# confirmed in practice as ansible_distribution == "REDOS", no space)
+# "defaults/os_dist/debian.yaml" for Debian
+# "defaults/os_dist/ubuntu.yaml" for Ubuntu
+# "defaults/os_dist/astra linux.yaml" for Astra Linux (Debian-based)
+# note: ansible_distribution keeps the space only for "Astra Linux",
+# which becomes "astra linux" after lower
+- name: "include variables ansible_distribution"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - "{{ ansible_distribution | lower }}.yaml"
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_dist"
+  loop_control:
+    label: "{{ item | basename }}"
+
+# "defaults/os_family/redhat-8.yaml" for RHEL 8.10
+# "defaults/os_family/redhat-9.yaml" for RHEL 9.4, Rocky 9.4
+# "defaults/os_family/redhat-10.yaml" for RHEL 10.0, Rocky 10.0
+# "defaults/os_family/debian-12.yaml" for Debian 12.5
+# "defaults/os_family/debian-13.yaml" for Debian 13.0
+# "defaults/os_family/astra linux-1.yaml" for Astra Linux 1.6/1.7/1.8
+#   (Debian 9/10/12 accordingly)
+# "defaults/os_family/redos-7.yaml" for RED OS 7.1/7.2/7.3 (RHEL/CentOS 7
+#   package base, e.g. glibc-2.28.el7, regardless of the newer kernel used)
+# "defaults/os_family/redos-8.yaml" for RED OS 8.0
+# note: ansible_distribution_major_version is the family-level major here
+- name: "include variables ansible_os_family dist_major_version"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - "{{ ansible_os_family | lower }}-{{
+          ansible_distribution_major_version }}.yaml"
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_family"
+  loop_control:
+    label: "{{ item | basename }}"
+
+# "defaults/os_dist/redhat-8.yaml" for RHEL 8.10
+# "defaults/os_dist/rocky-9.yaml" for Rocky 9.4
+# "defaults/os_dist/redos-7.yaml" for RED OS 7.1/7.2/7.3 (RHEL/CentOS 7)
+# "defaults/os_dist/redos-8.yaml" for RED OS 8.0
+# "defaults/os_dist/ubuntu-24.yaml" for Ubuntu 24.04
+# "defaults/os_dist/ubuntu-26.yaml" for Ubuntu 26.04
+# "defaults/os_dist/astra linux-1.yaml" for Astra Linux 1.6/1.7/1.8
+#   (Debian 9/10/12 accordingly)
+- name: "include variables ansible_distribution dist_major_version"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - "{{ ansible_distribution | lower }}-{{
+          ansible_distribution_major_version }}.yaml"
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_dist"
+  loop_control:
+    label: "{{ item | basename }}"
+
+# "defaults/os_family/redhat-9_4.yaml" for RHEL 9.4, Rocky 9.4
+# "defaults/os_family/redhat-10_0.yaml" for RHEL 10.0, Rocky 10.0
+# "defaults/os_family/debian-12_5.yaml" for Debian 12.5
+# "defaults/os_family/debian-13_0.yaml" for Debian 13.0
+# "defaults/os_family/astra linux-1_8.yaml" for Astra Linux 1.8 (Debian 12)
+# "defaults/os_family/redos-7_3.yaml" for RED OS 7.3
+# "defaults/os_family/redos-8_0.yaml" for RED OS 8.0
+- name: "include variables ansible_os_family dist_version"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - '{{ ansible_os_family | lower }}-{{
+          ansible_distribution_version | replace(".", "_") }}.yaml'
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_family"
+  loop_control:
+    label: "{{ item | basename }}"
+
+# "defaults/os_dist/redhat-8_10.yaml" for RHEL 8.10
+# "defaults/os_dist/rocky-9_4.yaml" for Rocky 9.4
+# "defaults/os_dist/redos-7_3.yaml" for RED OS 7.3
+# "defaults/os_dist/redos-8_0.yaml" for RED OS 8.0
+# "defaults/os_dist/ubuntu-22_04.yaml" for Ubuntu 22.04
+# "defaults/os_dist/ubuntu-24_04.yaml" for Ubuntu 24.04
+# "defaults/os_dist/astra linux-1_8_x86-64.yaml" for Astra Linux 1.8 (Debian 12)
+# note: Astra ansible_distribution_version keeps the arch suffix, e.g. "1.8_x86-64"
+- name: "include variables ansible_distribution dist_version"
+  include_vars: "{{ item }}"
+  loop: "{{ query('ansible.builtin.first_found', _ff, errors='warn') }}"
+  vars:
+    _ff:
+      files:
+        - '{{ ansible_distribution | lower }}-{{
+          ansible_distribution_version | replace(".", "_") }}.yaml'
+      paths:
+        - "{{ ansible_parent_role_paths | default([role_path], true) | first
+          }}/defaults/os_dist"
+  loop_control:
+    label: "{{ item | basename }}"

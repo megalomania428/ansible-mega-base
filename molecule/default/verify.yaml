@@ -1,0 +1,8 @@
+---
+- name: Verify downloaded files
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: "assertions are covered by converge.yaml"
+      ansible.builtin.debug:
+        msg: "base-vars loader assertions run during converge"

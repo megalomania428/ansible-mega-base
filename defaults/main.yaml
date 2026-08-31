@@ -1,0 +1,201 @@
+---
+infra_base_dmisu_keys:
+  - >-
+    ssh-ed25519
+    AAAAC3NzaC1lZDI1NTE5AAAAIBkmQtd5gEcDffbVVJDPy+23NTGI+6tDnafk7N1l1dfB
+    dmisu-ed25519-main
+  - >-
+    ssh-rsa
+    AAAAB3NzaC1yc2EAAAABJQAAAgEAphALdPgUSkOpenGkXFz+LOsI0rlbvO5HfpZVd8MawDP4t9zbc5fytAlwbj6EgCO3Q0HLyXArieGJ+NBr9Y72L3pEkwxQprMENRWBvScBYOQUyBM0NvjO6DBq9ohC0zEAmnnb1KytcMk78264I5TNIPuNSg2YeWuTSBFBI+viOKpI+yqx17VX3YyB9Ad5N+Vq8w05/ev1Jd4m0BggH8sScUdYPQncIOjqH4/5n6c7GfdOr1ptLIwT4Np3OWykD6cEMeZncuPQhiFSWMlldZER+V6Tiy1nmT/Ogl2FVlI+B0XHH42MF0HJb9R7bWxBNBOLLMZ2KofNXq+V7+xXDbhaJ4b4IGHHdlNZLrqcn+ThDh3NHmOSQCFEPt3fWmY1Ac0L5p042GWYnX/GkpgU4/b/PPTCDxaNeZa06NxKh0KTgsXjbNGFETwyee8wDA8ZnRSeE0KaKxkRQx7S3O2qppEsGyCUIJg2+CkMJ7fMjunJK8YW+SYsjK/jNW8gBe0rz+7LizJRJVuxToehs34OUAEUEdsMQWMvwQVZhrl+cwt2/YNXk/ms1R0XUXJR2Sn847tPqn88SCSgWHjeLg8SrH3+iNokP+5amc9c5wk9LGzrEuoxoXWqQs02BGrI/bFeeUI+WUC+PcvIJOKzVsqHXmR3f56792sdhxK6alKTRBAYhls=
+    dmisu-rsa-main
+infra_base_default_root_keys: "{{ infra_base_dmisu_keys }}"
+infra_base_default_users:
+  - name: "dmisu"
+    uid: 1111
+    gid: 1111
+    groups:
+      - root
+      - sudo
+    pub: "{{ infra_base_dmisu_keys }}"
+  - name: "test"
+    groups:
+      - sudo
+    uid: 1112
+    gid: 1112
+    pub: ""
+ssh_server_hardening: false
+sshd_moduli_file: "/etc/ssh/moduli"
+sshd_moduli_minimum: 1
+infra_base_default_packages:
+  - aide-common
+  - ethtool
+  - bash-completion
+  - dstat
+  - tcpdump
+  - vim
+  - tmux
+  - screen
+  - rsyslog
+  - logrotate
+  - sudo
+  - wget
+  - rsync
+  - numactl
+  - openssh-server
+  - openssh-client
+  - xz-utils
+  - pixz
+  - nmap
+  - atop
+  - htop
+  - traceroute
+  - whois
+  - iotop
+  - netcat
+  - bind9-utils
+  - bind9-host
+  - bind9-dnsutils
+  - gdisk
+  - rng-tools
+  - p7zip
+  - iftop
+  - nmon
+  - reptyr
+  - psmisc
+  - jq
+  - git
+  - bc
+  - lsof
+  - progress
+  - pv
+  - tree
+  - systemd-timesyncd
+  - e2fsprogs
+  - iproute2
+  - net-tools
+  - hostname
+  - lvm2
+  - dmidecode
+  - groff-base
+  - hdparm
+  - lshw
+  - python3-augeas
+  - python3-psutil
+  - iputils-ping
+  - iputils-arping
+  - locales
+  - secure-delete
+  - moreutils
+  - acl
+  - lz4
+  - lzop
+  - lzma
+  - zstd
+  - unattended-upgrades
+  - unzip
+  # hardening:
+  - haveged
+  - sysstat
+  - acct
+  - libpam-modules
+  - libpam-passwdqc
+  - libpam-pwquality
+  - apt-show-versions
+  - debsums
+  - nftables
+  - arpwatch
+  - fail2ban
+  - usbguard
+  - systemd-coredump
+  - xfsprogs
+infra_base_default_deny_packages:
+  - bind9
+  - chrony
+  - ntp
+  - iperf3
+  - postfix
+  - libpython2.7
+  - libpython2.7-stdlib
+  - libpython2.7-minimal
+  # hardening:
+  - at
+  - auditd
+  - telnet
+  - telnet-server
+  - telnetd
+  - inetutils-telnetd
+  - inetd
+  - prelink
+  - rpcbind
+  - rsh-server
+  - xinetd
+  - ypserv
+infra_base_ntp:
+  - 0.de.pool.ntp.org
+  - 1.de.pool.ntp.org
+  - 2.de.pool.ntp.org
+  - 3.de.pool.ntp.org
+infra_base_ntp_fallback:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org
+  - 3.pool.ntp.org
+infra_base_dns:
+  - 1.1.1.1
+  - 8.8.8.8
+infra_base_dns_fallback:
+  - 8.8.4.4
+  - 9.9.9.9
+infra_base_dns_domains:
+  - tm.p2p.world
+  - tm.p2p.org
+  - p2p.world
+  - p2p.org
+infra_base_dns_suffix: default.tm.p2p.world
+infra_base_dns_dnssec: allow-downgrade
+infra_default_grub_options:
+  - { filename: "crashkernel", option: "crashkernel=auto" }
+  - { filename: "autofsck", option: "fsck.repair=yes" }
+  - { filename: "consobl", option: "consoleblank=0" }
+infra_systemd_units_braces:
+  - "systemd-timesyncd"
+  - "systemd-journald"
+  - "systemd-resolved"
+  - "syslog"
+  - "sshd"
+lynis_profile_files:
+  - /etc/bashrc
+  - /etc/profile
+  - /etc/csh.cshrc
+  - /etc/bash.bashrc
+  - /etc/bash.bashrc.local
+infra_base_default_ssh_config:
+  PermitRootLogin: "prohibit-password"
+  ClientAliveInterval: "7"
+  ClientAliveCountMax: "7"
+  Compression: "no"
+  LogLevel: "VERBOSE"
+  MaxAuthTries: "3"
+  MaxSessions: "2"
+  TCPKeepAlive: "no"
+  X11Forwarding: "no"
+  AllowAgentForwarding: "yes"
+  UseDNS: "no"
+  AllowTcpForwarding: "no"
+  AcceptEnv/1: LANG
+  AcceptEnv/2: LC_*
+  AcceptEnv/3: ANSIBLE_*
+  AcceptEnv/4: RSYNC_RSH
+infra_base_default_login_defs:
+  PASS_MAX_DAYS: 365
+  PASS_MIN_DAYS: 1
+  PASS_MIN_LEN: 8
+  PASS_WARN_AGE: 7
+  UMASK: 0077
+  FAILLOG_ENAB: yes
+  SHA_CRYPT_MIN_ROUNDS: 12345
+  SHA_CRYPT_MAX_ROUNDS: 123456
+infra_base_apt_keys_default: []
+infra_base_apt_repos_default: []
+infra_disable_tendermint_syslog: true
+infra_base_shell_tmout: 10800

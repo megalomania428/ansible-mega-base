@@ -1,0 +1,45 @@
+---
+ssh_server_hardening: true
+infra_sshd_ciphers:
+  - aes128-ctr
+  - aes192-ctr
+  - aes256-ctr
+  - aes128-gcm@openssh.com
+  - aes256-gcm@openssh.com
+  - chacha20-poly1305@openssh.com
+infra_sshd_MACs:
+  - umac-128-etm@openssh.com
+  - hmac-sha1
+  - hmac-sha2-256-etm@openssh.com
+  - hmac-sha2-256
+  - hmac-sha2-512
+  - hmac-sha2-512-etm@openssh.com
+infra_sshd_kex_gss:
+  - gss-gex-sha1-
+  - gss-group1-sha1-
+  - gss-group14-sha1-
+infra_sshd_kex:
+  - curve25519-sha256
+  - curve25519-sha256@libssh.org
+  - diffie-hellman-group14-sha1
+  - diffie-hellman-group14-sha256
+  - diffie-hellman-group16-sha512
+  - diffie-hellman-group18-sha512
+  - ecdh-sha2-nistp256
+  - ecdh-sha2-nistp384
+  - ecdh-sha2-nistp521
+infra_sshd_host_key:
+  - ecdsa-sha2-nistp256
+  - ecdsa-sha2-nistp256-cert-v01@openssh.com
+  - ecdsa-sha2-nistp384
+  - ecdsa-sha2-nistp384-cert-v01@openssh.com
+  - ecdsa-sha2-nistp521
+  - ecdsa-sha2-nistp521-cert-v01@openssh.com
+  - ssh-ed25519
+  - ssh-ed25519-cert-v01@openssh.com
+  - ssh-rsa
+  - ssh-rsa-cert-v01@openssh.com
+infra_sshd_pubkey_type: "{{ infra_sshd_host_key }}"
+infra_sshd_CA_sig: []
+infra_sshd_variable_name: OPTIONS
+infra_sshd_variable_file: /etc/sysconfig/sshd
