@@ -1,4 +1,5 @@
-deps
+# cspell:ignore pycache
+/deps/
 *.pyc
-**/__pycache__/
+__pycache__/
 go-lib
